@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="author" content="Lim Huey Wen">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <div id="app-loading" class="boot-screen" role="status" aria-live="polite">
+    <div class="brand-mark"><span aria-hidden="true">全</span><img data-brand-logo class="hidden" alt=""></div>
+    <div>
+      <strong>Loading Company Approach CRM</strong>
+      <p>Connecting to the Marketing database.</p>
+    </div>
+  </div>
+
+  <div id="identity-screen" class="identity-screen hidden">
+    <main class="identity-panel">
+      <div class="identity-copy">
+        <div class="identity-logo-frame"><div class="brand-mark identity-logo"><span aria-hidden="true">全</span><img data-brand-logo class="hidden" alt=""></div></div>
+        <div class="identity-message">
+          <p class="kicker">全辩 Marketing</p>
+          <h1>Company outreach, in one place.</h1>
+          <p>Track ownership, email activity, follow-ups and replies without maintaining separate files.</p>
+          <p class="creator-credit identity-credit">Created by <strong>Lim Huey Wen</strong></p>
+        </div>
+      </div>
+      <form id="identity-form" class="identity-form">
+        <div><p class="kicker">Committee access</p><h2>Choose your name</h2><p class="form-intro">Your selection is recorded with every CRM action from this browser.</p></div>
+        <label for="member-select">Committee member</label>
+        <select id="member-select" required>
+          <option value="">Choose your name</option>
+        </select>
+        <div class="notice warning">This website is restricted to the shared Marketing Google account. Always select your own name.</div>
+        <button class="button primary wide" type="submit">Continue to CRM</button>
+      </form>
+    </main>
+  </div>
+
+  <div id="shell" class="shell hidden">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="sidebar-brand">
+        <div class="brand-mark small"><span aria-hidden="true">全</span><img data-brand-logo class="hidden" alt=""></div>
+        <div><strong>Company CRM</strong><span id="campaign-label">Marketing</span></div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item active" data-view="overview">Overview</button>
+        <button class="nav-item" data-view="add-company">Add company</button>
+        <button id="pipeline-nav" class="nav-item" data-view="pipeline">My pipeline</button>
+        <button class="nav-item" data-view="follow-ups">Follow-ups</button>
+        <button class="nav-item" data-view="queue">Email queue</button>
+        <button class="nav-item" data-view="replies">Inbox review</button>
+        <button class="nav-item admin-only hidden" data-view="team">Team progress</button>
+        <button class="nav-item admin-only hidden" data-view="studio">Template studio</button>
+        <button id="admin-nav" class="nav-item hidden" data-view="admin">Admin review</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span>Working as</span>
+        <strong id="sidebar-member"></strong>
+        <button id="edit-signature" class="text-button" type="button">My email signature</button>
+        <button id="switch-member" class="text-button" type="button">Switch member</button>
+        <div class="creator-credit">Created by <strong>Lim Huey Wen</strong></div>
+      </div>
+    </aside>
+
+    <div class="mobile-bar">
+      <button id="mobile-menu" class="button ghost compact" type="button" aria-expanded="false">Menu</button>
+      <strong>全辩 Company CRM</strong>
+      <button id="mobile-switch" class="button ghost compact" type="button">Member</button>
+    </div>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p id="page-context" class="kicker">Campaign workspace</p>
+          <h2 id="page-title">Overview</h2>
+        </div>
+        <div class="topbar-actions">
+          <span id="quota-chip" class="quota-chip">Quota: checking</span>
+          <button class="button primary" data-open-add type="button">Add company</button>
+        </div>
+      </header>
+
+      <section id="view-overview" class="view active" aria-labelledby="page-title">
+        <div id="summary-grid" class="summary-grid" aria-live="polite"></div>
+        <div class="content-grid">
+          <section class="panel span-2">
+            <div class="panel-heading"><div><h3>Recent companies</h3><p>Your latest reservations and approach activity.</p></div><button class="text-button" data-view-link="pipeline">View pipeline</button></div>
+            <div id="recent-list" class="record-list"></div>
+          </section>
+          <section class="panel action-panel">
+            <h3>What needs attention</h3>
+            <div id="attention-list" class="attention-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-add-company" class="view" aria-labelledby="page-title">
+        <div class="split-layout">
+          <form id="company-form" class="panel form-panel">
+            <div class="panel-heading"><div><h3>New company intake</h3><p>Enter whatever you found. Only the company name is required.</p></div></div>
+            <div class="form-grid">
+              <label class="field full"><span>Company or brand name *</span><input name="companyName" required autocomplete="organization" placeholder="Example: Spritzer"></label>
+              <label class="field"><span>Legal name</span><input name="legalName" placeholder="If available"></label>
+              <label class="field"><span>Industry</span><input name="industry" placeholder="F&B, printing, hotel"></label>
+              <label class="field"><span>Contact person</span><input name="contactName" autocomplete="name" placeholder="If available"></label>
+              <label class="field"><span>Department</span><input name="department" placeholder="Marketing, CSR"></label>
+              <label class="field"><span>Email</span><input name="email" type="text" autocomplete="email" placeholder="One or more emails"></label>
+              <label class="field"><span>Phone</span><input name="phone" type="text" inputmode="tel" autocomplete="tel" placeholder="Keep country code if known"></label>
+              <label class="field"><span>Website</span><input name="website" type="text" inputmode="url" placeholder="company.com"></label>
+              <label class="field"><span>Social channel</span><select name="socialChannel"><option value="">Not provided</option><option>小红书</option><option>Instagram</option><option>Facebook</option><option>LinkedIn</option><option>TikTok</option><option>Other</option></select></label>
+              <label class="field"><span>Social account</span><input name="socialHandle" placeholder="Account name or handle"></label>
+              <label class="field full"><span>Notes</span><textarea name="notes" rows="3" placeholder="Useful context, source, or suggested sponsorship"></textarea></label>
+            </div>
+            <div class="form-actions"><button id="check-clash" class="button secondary" type="button">Check for clashes</button><button id="create-company" class="button primary" type="submit" disabled>Create and reserve</button></div>
+          </form>
+          <aside class="panel match-panel">
+            <div class="panel-heading"><div><h3>Clash check</h3><p>The system will show the matching record and its current owner.</p></div></div>
+            <div id="match-results" class="match-results empty-state"><strong>No check performed</strong><p>Enter the company information, then run the clash check.</p></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="view-pipeline" class="view" aria-labelledby="page-title">
+        <div class="toolbar panel">
+          <div class="filter-group">
+            <label id="pipeline-owner-field" class="compact-field admin-only hidden"><span>Member</span><select id="pipeline-owner"><option value="">All members</option></select></label>
+            <label class="compact-field"><span>Stage</span><select id="pipeline-stage"><option value="">All stages</option></select></label>
+          </div>
+          <div class="record-actions"><button id="bulk-email" class="button primary" type="button">Bulk email selected</button><button id="refresh-pipeline" class="button secondary" type="button">Refresh</button></div>
+        </div>
+        <section class="panel table-panel">
+          <div id="pipeline-table" class="table-wrap"></div>
+        </section>
+      </section>
+
+      <section id="view-replies" class="view" aria-labelledby="page-title">
+        <div class="inbox-header panel">
+          <div><h3>Gmail inbox review</h3><p>Human replies and automated delivery messages are separated so the team knows what needs a response.</p></div>
+          <button id="sync-replies" class="button primary" type="button">Sync Gmail now</button>
+          <div id="reply-sync-status" class="notice full-row">Automatic Gmail checking runs every 5 minutes. Messages sent from the shared Marketing Gmail are ignored.</div>
+        </div>
+        <div class="inbox-grid">
+          <section class="panel"><div class="panel-heading"><div><h3>Human replies</h3><p>These messages need a committee response or next action.</p></div><span id="human-reply-count" class="count-badge">0</span></div><div id="reply-list" class="record-list"></div></section>
+          <section class="panel"><div class="panel-heading"><div><h3>Automated and delivery messages</h3><p>Delivery failures, full mailboxes, out-of-office notices and automatic acknowledgements.</p></div><span id="system-reply-count" class="count-badge">0</span></div><div id="system-reply-list" class="record-list"></div></section>
+        </div>
+      </section>
+
+      <section id="view-team" class="view" aria-labelledby="page-title">
+        <div id="team-summary" class="summary-grid team-summary" aria-live="polite"></div>
+        <section class="panel table-panel">
+          <div class="table-heading"><div><h3>Member progress</h3><p>Approach totals use actual sent activity. Click a member to open their companies.</p></div><button id="refresh-team" class="button secondary" type="button">Refresh</button></div>
+          <div id="team-progress-table" class="table-wrap"></div>
+        </section>
+      </section>
+
+      <section id="view-queue" class="view" aria-labelledby="page-title">
+        <section class="panel"><div class="panel-heading"><div><h3>Scheduled and recent emails</h3><p>Scheduled batches continue automatically even after members close the page.</p></div><div class="record-actions"><button id="run-queue-now" class="button primary" type="button">Process due now</button><button id="repair-scheduler" class="button secondary" type="button">Repair scheduler</button><button id="refresh-queue" class="button secondary" type="button">Refresh</button></div></div><div id="scheduler-status" class="notice" style="margin-bottom:14px"></div><div id="queue-list" class="record-list"></div></section>
+      </section>
+
+      <section id="view-follow-ups" class="view" aria-labelledby="page-title">
+        <section class="panel">
+          <div class="panel-heading"><div><h3>Follow-up queue</h3><p>Companies appear here when their next action date is due.</p></div><button id="refresh-followups" class="button secondary">Refresh</button></div>
+          <div id="followup-list" class="record-list"></div>
+        </section>
+      </section>
+
+      <section id="view-studio" class="view" aria-labelledby="page-title">
+        <div class="studio-layout">
+          <aside class="panel studio-library-panel">
+            <div class="panel-heading"><div><h3>Email templates</h3><p>Published templates can be used immediately by every member.</p></div><button id="new-template" class="button primary compact" type="button">New</button></div>
+            <div id="template-library" class="studio-template-list"></div>
+          </aside>
+          <section class="panel studio-canvas-panel">
+            <form id="template-form" class="studio-form">
+              <input name="templateId" type="hidden">
+              <div class="studio-heading"><div><h3 id="studio-editor-title">New email template</h3><p id="template-version-label">Not saved yet</p></div><div class="record-actions"><button id="preview-template" class="button secondary" type="button">Preview</button><button class="button secondary" type="submit" name="saveAction" value="Draft">Save draft</button><button class="button primary" type="submit" name="saveAction" value="Published">Publish</button></div></div>
+              <div class="form-grid">
+                <label class="field"><span>Template name</span><input name="name" required placeholder="Example: Official sponsorship approach"></label>
+                <label class="field"><span>Email type</span><input name="type" list="email-type-options" required maxlength="60" placeholder="Example: Partnership proposal"><small>Choose an existing type or enter a new one. New types become available automatically.</small></label>
+                <datalist id="email-type-options"><option value="First Approach"></option><option value="Follow-up"></option></datalist>
+                <label class="field full"><span>Subject</span><input name="subject" required placeholder="You may use placeholders such as {{CompanyName}}"></label>
+              </div>
+              <div class="editor-field">
+                <span class="editor-label">Email body</span>
+                <div class="editor-toolbar" data-toolbar-for="template-editor">
+                  <select data-font aria-label="Font"><option value="Times New Roman">Times New Roman</option><option value="KaiTi">KaiTi 中文</option><option value="Arial">Arial</option></select>
+                  <button type="button" data-command="bold" aria-label="Bold"><strong>B</strong></button><button type="button" data-command="italic" aria-label="Italic"><em>I</em></button><button type="button" data-command="underline" aria-label="Underline"><u>U</u></button>
+                  <button type="button" data-command="insertUnorderedList">Bullets</button><button type="button" data-command="insertOrderedList">Numbers</button><button type="button" data-command="justifyLeft">Left</button><button type="button" data-command="justifyCenter">Center</button>
+                  <button type="button" data-add-link>Link</button><button type="button" data-insert-table>Table</button>
+                  <select data-placeholder aria-label="Insert placeholder"><option value="">Insert field</option><option>{{CompanyName}}</option><option>{{LegalName}}</option><option>{{ContactName}}</option><option>{{CampaignName}}</option><option>{{MemberName}}</option><option>{{MemberTitle}}</option><option>{{MemberPhone}}</option><option>{{MemberEmail}}</option><option>{{MemberSignature}}</option></select>
+                  <span class="toolbar-divider" aria-hidden="true"></span><span class="toolbar-label">Selected image</span><button type="button" data-image-fit>Fit logo</button><button type="button" data-image-width="25%">Small</button><button type="button" data-image-width="50%">Medium</button><button type="button" data-image-width="75%">Large</button><button type="button" data-image-width="100%">Full</button><button type="button" data-image-custom>Custom</button>
+                </div>
+                <div id="template-editor" class="rich-editor" contenteditable="true" data-empty="Write the email here. Paste formatted text, insert pictures and add tables."></div>
+                <input name="htmlBody" type="hidden">
+              </div>
+              <div class="studio-subgrid">
+                <section class="studio-section"><div><h4>Pictures and linked logos</h4><p>Upload once, then insert the saved image wherever the cursor is placed.</p></div><div id="template-image-assets" class="asset-picker"></div></section>
+                <section class="studio-section"><div><h4>Default PDF attachments</h4><p>Selected PDFs are attached automatically whenever this template is used.</p></div><div id="template-pdf-assets" class="asset-picker"></div></section>
+              </div>
+              <div class="studio-test-row"><label class="field"><span>Send a test to</span><input id="template-test-email" type="email" placeholder="your-address@example.com"></label><button id="send-template-test" class="button secondary" type="button">Send test</button></div>
+            </form>
+          </section>
+          <aside class="panel asset-upload-panel">
+            <div class="panel-heading"><div><h3>Asset library</h3><p>Store official pictures, linked logos and proposal PDFs.</p></div></div>
+            <form id="asset-form" class="stack-form">
+              <label class="field"><span>Asset name</span><input name="name" required placeholder="Example: Main event logo"></label>
+              <label class="field"><span>File</span><input name="file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf" required></label>
+              <label class="field"><span>Image description</span><input name="altText" placeholder="Shown if the picture cannot load"></label>
+              <label class="field"><span>Website link for image</span><input name="websiteUrl" type="url" placeholder="https://official-website.com"></label>
+              <button class="button primary" type="submit">Upload asset</button>
+            </form>
+            <div id="asset-library" class="asset-library"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="view-admin" class="view" aria-labelledby="page-title">
+        <div class="admin-grid">
+          <section class="panel"><div class="panel-heading"><div><h3>Add or update committee member</h3><p>Entering an existing name updates that member instead of creating a duplicate.</p></div></div><form id="member-form" class="stack-form"><label class="field"><span>Name</span><input name="memberName" required></label><label class="field"><span>Role</span><select name="role"><option>Member</option><option>Director</option><option>Admin</option></select></label><label class="field"><span>Title</span><input name="title"></label><label class="field"><span>Email</span><input name="email" type="email"></label><label class="field"><span>Phone</span><input name="phone"></label><label class="field"><span>Reply notification email</span><input name="notificationEmail" type="email" placeholder="Personal email for alerts"></label><label class="field"><span>Notify about replies</span><select name="notifyOnReplies"><option value="false">No</option><option value="true">Yes</option></select></label><div class="notice">Reply alerts go to the company owner and to Directors/Admins who enable notifications. The member creates their logo-rich signature from <strong>My email signature</strong>.</div><button class="button primary" type="submit">Add or update member</button></form></section>
+          <section class="panel"><div class="panel-heading"><div><h3>Email design system</h3><p>Templates, pictures and reusable PDFs now live inside the CRM.</p></div><button class="button primary" type="button" data-view-link="studio">Open template studio</button></div><div class="notice">Gmail Draft import has been permanently retired. Scheduled emails use a locked copy of the design and assets saved at queue time.</div></section>
+          <section class="panel span-2"><div class="panel-heading"><div><h3>Duplicate review</h3><p>Resolve similar names before the member creates a separate record.</p></div></div><div id="duplicate-list" class="record-list"></div></section>
+          <section class="panel"><div class="panel-heading"><div><h3>Members</h3><p>Current access identities.</p></div></div><div id="member-list" class="record-list compact-list"></div></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="composer-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="composer-title">
+    <div class="modal-card large">
+      <div class="modal-heading"><div><p class="kicker">Shared Marketing Gmail</p><h2 id="composer-title">Send company email</h2></div><button class="close-button" data-close-modal="composer-modal" aria-label="Close">Close</button></div>
+      <form id="composer-form" class="composer-form">
+        <input name="approachId" type="hidden">
+        <div class="form-grid">
+          <label class="field"><span>Email type</span><select name="mode"></select></label>
+          <label class="field"><span>Template</span><select name="templateId" required></select></label>
+          <label class="field full"><span>To *</span><input name="to" required></label>
+          <label class="field"><span>CC</span><input name="cc"></label>
+          <label class="field"><span>BCC</span><input name="bcc"></label>
+          <label class="field"><span>Contact name</span><input name="contactName"></label>
+          <label class="field full"><span>Subject</span><input name="subject" required></label>
+          <div class="editor-field full"><span class="editor-label">Email body</span><div id="composer-editor" class="rich-editor compact-editor" contenteditable="true"></div><input name="htmlBody" type="hidden"></div>
+          <label class="field full"><span>PDF attachments</span><input id="composer-attachments" type="file" accept="application/pdf,.pdf" multiple><small>The recipient receives the actual PDF files, not Drive links. Maximum 20 MB total.</small></label>
+          <label class="field"><span>Send option</span><select name="sendOption"><option value="now">Send now</option><option value="schedule">Schedule</option></select></label>
+          <label class="field"><span>Scheduled date and time</span><input name="scheduledAt" type="datetime-local"></label>
+        </div>
+        <div class="notice warning">The selected member's signature is added automatically. Scheduled emails enter the shared queue.</div>
+        <div class="form-actions"><button class="button secondary" type="button" data-close-modal="composer-modal">Cancel</button><button class="button primary" type="submit">Send or schedule</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="bulk-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
+    <div class="modal-card large"><div class="modal-heading"><div><p class="kicker">Personalized batch</p><h2 id="bulk-title">Bulk email selected companies</h2></div><button class="close-button" data-close-modal="bulk-modal">Close</button></div>
+      <form id="bulk-form" class="composer-form"><div id="bulk-count" class="notice"></div><div class="form-grid">
+        <label class="field"><span>Template</span><select name="templateId" required></select></label><label class="field"><span>Email type</span><select name="mode"></select></label>
+        <label class="field full"><span>Subject</span><input name="subject" required></label><div class="editor-field full"><span class="editor-label">Email body</span><div id="bulk-editor" class="rich-editor compact-editor" contenteditable="true"></div><input name="htmlBody" type="hidden"></div>
+        <label class="field full"><span>PDF attachments</span><input id="bulk-attachments" type="file" accept="application/pdf,.pdf" multiple><small>The same actual PDF files are attached separately to every selected company email.</small></label>
+        <label class="field"><span>Send option</span><select name="sendOption"><option value="now">Send now</option><option value="schedule">Schedule</option></select></label><label class="field"><span>Scheduled date and time</span><input name="scheduledAt" type="datetime-local"></label>
+      </div><div class="notice warning">Each company receives a separate personalized message. Recipients are never exposed to one another.</div><div class="form-actions"><button class="button secondary" type="button" data-close-modal="bulk-modal">Cancel</button><button class="button primary" type="submit">Queue batch</button></div></form>
+    </div>
+  </div>
+
+  <div id="signature-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="signature-title">
+    <div class="modal-card large"><div class="modal-heading"><div><p class="kicker">Signature studio</p><h2 id="signature-title">My email signature</h2></div><button class="close-button" data-close-modal="signature-modal">Close</button></div>
+      <form id="signature-form" class="stack-form"><div class="form-grid"><label class="field"><span>Role or title</span><input name="title"></label><label class="field"><span>Contact email</span><input name="email" type="email"></label><label class="field"><span>Phone</span><input name="phone"></label><label class="field"><span>Reply notification email</span><input name="notificationEmail" type="email" placeholder="Your personal email"></label><label class="field"><span>Notify me about replies</span><select name="notifyOnReplies"><option value="false">No</option><option value="true">Yes</option></select></label></div>
+        <div class="editor-field"><span class="editor-label">Signature design</span><div class="editor-toolbar" data-toolbar-for="signature-editor"><select data-font aria-label="Font"><option value="Times New Roman">Times New Roman</option><option value="KaiTi">KaiTi 中文</option><option value="Arial">Arial</option></select><button type="button" data-command="bold"><strong>B</strong></button><button type="button" data-command="italic"><em>I</em></button><button type="button" data-command="underline"><u>U</u></button><button type="button" data-add-link>Link</button><select data-placeholder aria-label="Insert member field"><option value="">Insert field</option><option>{{MemberName}}</option><option>{{MemberTitle}}</option><option>{{MemberPhone}}</option><option>{{MemberEmail}}</option></select><span class="toolbar-divider" aria-hidden="true"></span><span class="toolbar-label">Selected image</span><button type="button" data-image-fit>Fit logo</button><button type="button" data-image-width="25%">Small</button><button type="button" data-image-width="50%">Medium</button><button type="button" data-image-width="75%">Large</button><button type="button" data-image-width="100%">Full</button><button type="button" data-image-custom>Custom</button></div><div id="signature-editor" class="rich-editor signature-editor" contenteditable="true"></div><input name="signatureHtml" type="hidden"></div>
+        <section class="studio-section"><div><h4>Insert a logo or picture</h4><p>Upload a new picture to insert it immediately, or click Insert beside a saved image. Website links remain attached.</p></div><div id="signature-asset-fields" class="form-grid mini-upload-form"><label class="field"><span>Image name</span><input name="name"></label><label class="field"><span>Website link</span><input name="websiteUrl" type="url" placeholder="https://official-website.com"></label><label class="field full"><span>Image file</span><input name="file" type="file" accept="image/png,image/jpeg,image/gif,image/webp"></label><div class="form-actions full"><button id="upload-signature-asset" class="button secondary" type="button">Upload and insert picture</button></div></div><div id="signature-image-assets" class="asset-picker" aria-label="Saved signature images"></div></section>
+        <div class="notice">The design is stored inside the CRM. It does not depend on a Gmail draft and remains available for scheduled emails.</div><div class="form-actions"><button class="button secondary" type="button" data-close-modal="signature-modal">Cancel</button><button class="button primary" type="submit">Save signature</button></div></form>
+    </div>
+  </div>
+
+  <div id="preview-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="preview-title"><div class="modal-card large"><div class="modal-heading"><div><p class="kicker">Email preview</p><h2 id="preview-title">Recipient view</h2></div><button class="close-button" data-close-modal="preview-modal">Close</button></div><div id="preview-subject" class="preview-subject"></div><iframe id="email-preview" class="email-preview" title="Email preview" sandbox="allow-same-origin"></iframe></div></div>
+
+  <div id="details-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="details-title">
+    <div class="modal-card large">
+      <div class="modal-heading"><div><p class="kicker">Company profile</p><h2 id="details-title">Add contact or alias</h2></div><button class="close-button" data-close-modal="details-modal" aria-label="Close">Close</button></div>
+      <div id="existing-details" class="notice" style="background:var(--surface-2);margin-bottom:16px"></div>
+      <form id="details-form">
+        <input name="approachId" type="hidden">
+        <div class="form-grid">
+          <label class="field"><span>Alternative company name</span><input name="alias" placeholder="Brand, legal or Chinese name"></label>
+          <label class="field"><span>Legal name</span><input name="legalName"></label>
+          <label class="field"><span>Website</span><input name="website"></label>
+          <label class="field"><span>Industry</span><input name="industry"></label>
+          <label class="field"><span>New contact name</span><input name="contactName"></label>
+          <label class="field"><span>Department</span><input name="department"></label>
+          <label class="field"><span>Email</span><input name="email"></label>
+          <label class="field"><span>Phone</span><input name="phone"></label>
+          <label class="field"><span>Social channel</span><select name="socialChannel"><option value="">Not provided</option><option>小红书</option><option>Instagram</option><option>Facebook</option><option>LinkedIn</option><option>TikTok</option><option>Other</option></select></label>
+          <label class="field"><span>Social account</span><input name="socialHandle"></label>
+        </div>
+        <div class="notice warning" style="margin-top:14px">A new email, phone or social account is checked against all other companies before it is added.</div>
+        <div class="form-actions"><button class="button secondary" type="button" data-close-modal="details-modal">Cancel</button><button class="button primary" type="submit">Save details</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="activity-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="activity-title">
+    <div class="modal-card">
+      <div class="modal-heading"><div><p class="kicker">Interaction log</p><h2 id="activity-title">Record manual activity</h2></div><button class="close-button" data-close-modal="activity-modal" aria-label="Close">Close</button></div>
+      <form id="activity-form" class="stack-form">
+        <input name="approachId" type="hidden">
+        <div class="form-grid">
+          <label class="field"><span>Channel</span><select name="channel"><option>WhatsApp</option><option>Phone</option><option>Meeting</option><option>小红书</option><option>Instagram</option><option>Facebook</option><option>Other</option></select></label>
+          <label class="field"><span>Direction</span><select name="direction"><option>Outgoing</option><option>Incoming</option></select></label>
+          <label class="field"><span>Activity type</span><select name="type"><option>Approach</option><option>Follow-up</option><option>Reply</option><option>Negotiation</option><option>Note</option></select></label>
+          <label class="field"><span>Date and time</span><input name="occurredAt" type="datetime-local"></label>
+          <label class="field"><span>Next follow-up</span><input name="nextFollowUpAt" type="datetime-local"></label>
+          <label class="field full"><span>Subject</span><input name="subject" placeholder="Short activity title"></label>
+          <label class="field full"><span>Summary *</span><textarea name="summary" rows="4" required placeholder="What happened and what is needed next"></textarea></label>
+        </div>
+        <div class="form-actions"><button class="button secondary" type="button" data-close-modal="activity-modal">Cancel</button><button class="button primary" type="submit">Save activity</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script>
+    window.addEventListener('error', function(event) {
+      var loading = document.getElementById('app-loading');
+      if (!loading || loading.classList.contains('hidden')) return;
+      window.__qbStartupFailed = true;
+      var message = event && event.message ? event.message : 'The browser could not start App.html.';
+      loading.innerHTML = '<div class="startup-error"><strong>CRM application error</strong><p>' + String(message).replace(/[&<>"\']/g, function(character) { return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","\'":"&#39;"})[character]; }) + '</p><p>Replace Api.gs, App.html and Index.html from the same package, deploy a new version, then reload.</p><button class="button primary" type="button" onclick="location.reload()">Reload CRM</button></div>';
+    }, true);
+  </script>
+  <script id="qb-app-source" type="application/octet-stream"><?!= includeBase64('App'); ?></script>
+  <script>
+    (function loadApplicationSource() {
+      var sourceNode = document.getElementById('qb-app-source');
+      var encoded = sourceNode ? sourceNode.textContent.trim() : '';
+      if (!encoded) throw new Error('App.html source was not included.');
+      var binary = window.atob(encoded);
+      var bytes = new Uint8Array(binary.length);
+      for (var index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      var source = new TextDecoder('utf-8').decode(bytes);
+      var applicationScript = document.createElement('script');
+      applicationScript.text = source;
+      document.head.appendChild(applicationScript);
+    })();
+  </script>
+  <script>
+    window.setTimeout(function() {
+      var loading = document.getElementById('app-loading');
+      if (!loading || loading.classList.contains('hidden') || window.__qbStartupFinished || window.__qbStartupFailed) return;
+      loading.innerHTML = '<div class="startup-error"><strong>CRM startup did not finish</strong><p>The application script or database request did not complete.</p><p>Confirm that App.html was copied, run <code>setupSystem()</code>, deploy a new web-app version, then reload.</p><button class="button primary" type="button" onclick="location.reload()">Reload CRM</button></div>';
+    }, 35000);
+  </script>
+</body>
+</html>

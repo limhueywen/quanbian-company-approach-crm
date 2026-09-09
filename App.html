@@ -1,0 +1,1322 @@
+window.__qbAppScriptExecuted = true;
+(() => {
+  'use strict';
+
+  const state = {
+    bootstrap: null,
+    actor: null,
+    activeView: 'overview',
+    lastClashCheck: null,
+    composerData: null,
+    pipelineRows: [],
+    studio: { templates: [], assets: [], selectedTemplateId: '' }
+  };
+
+  const titles = {
+    overview: ['Campaign workspace', 'Overview'],
+    'add-company': ['Company intake', 'Add company'],
+    pipeline: ['Approach ownership', 'Company pipeline'],
+    'follow-ups': ['Next actions', 'Follow-ups'],
+    queue: ['Outbound operations', 'Email queue'],
+    replies: ['Inbox operations', 'Inbox review'],
+    team: ['Committee performance', 'Team progress'],
+    studio: ['Email design', 'Template studio'],
+    admin: ['Director controls', 'Admin review']
+  };
+
+  const pipelineStages = ['Researching', 'Ready for Review', 'Approved', 'Contacted', 'Replied', 'Negotiating', 'Confirmed', 'Rejected', 'Closed'];
+
+  const $ = selector => document.querySelector(selector);
+  const $$ = selector => Array.from(document.querySelectorAll(selector));
+
+  function server(functionName, ...args) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`${functionName} did not respond within 30 seconds. Reload the page. If it happens again, run setupSystem() and redeploy the web app.`));
+      }, 30000);
+      const succeed = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(value);
+      };
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(new Error(error && error.message ? error.message : String(error)));
+      };
+      google.script.run
+        .withSuccessHandler(succeed)
+        .withFailureHandler(fail)
+        [functionName](...args);
+    });
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>'"]/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    })[character]);
+  }
+
+  function formObject(form) {
+    return Object.fromEntries(new FormData(form).entries());
+  }
+
+  function actorPayload() {
+    if (!state.actor) throw new Error('Select your committee identity.');
+    return {
+      memberId: state.actor.memberId,
+      sessionId: state.actor.sessionId,
+      deviceSummary: state.actor.deviceSummary
+    };
+  }
+
+  function deviceSession() {
+    let sessionId = localStorage.getItem('qb_device_session');
+    if (!sessionId) {
+      sessionId = 'WEB-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random()).toString();
+      localStorage.setItem('qb_device_session', sessionId);
+    }
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown';
+    const screenSize = `${window.screen.width}x${window.screen.height}`;
+    const platform = navigator.userAgentData && navigator.userAgentData.platform ? navigator.userAgentData.platform : navigator.platform;
+    return {
+      sessionId,
+      userAgent: navigator.userAgent,
+      timezone,
+      screenSize,
+      deviceSummary: `${platform || 'Device'} | ${screenSize} | ${timezone}`
+    };
+  }
+
+  async function init() {
+    window.__qbStartupStarted = true;
+    renderLoading();
+    try {
+      bindEvents();
+      state.bootstrap = await server('getBootstrapData');
+      populateIdentity();
+      populateStageFilter();
+      $('#campaign-label').textContent = state.bootstrap.campaign.name;
+      $('#app-loading').classList.add('hidden');
+      $('#identity-screen').classList.remove('hidden');
+      window.__qbStartupFinished = true;
+      server('getBrandLogoData').then(applyBrandLogo).catch(error => console.warn('CRM logo could not be loaded:', error.message));
+    } catch (error) {
+      window.__qbStartupFailed = true;
+      $('#app-loading').innerHTML = `<div class="startup-error"><strong>CRM could not connect</strong><p>${escapeHtml(error.message)}</p><p>Run <code>setupSystem()</code> once from the Apps Script editor, deploy a new web-app version, then reload this page.</p><button class="button primary" type="button" onclick="location.reload()">Reload CRM</button></div>`;
+    }
+  }
+
+  function bindEvents() {
+    $('#identity-form').addEventListener('submit', selectIdentity);
+    $('#switch-member').addEventListener('click', switchMember);
+    $('#mobile-switch').addEventListener('click', switchMember);
+    $('#mobile-menu').addEventListener('click', () => {
+      const sidebar = $('.sidebar');
+      const open = sidebar.classList.toggle('open');
+      $('#mobile-menu').setAttribute('aria-expanded', String(open));
+    });
+    $$('.nav-item').forEach(button => button.addEventListener('click', () => navigate(button.dataset.view)));
+    $$('[data-open-add]').forEach(button => button.addEventListener('click', () => navigate('add-company')));
+    $$('[data-view-link]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.viewLink)));
+    $('#check-clash').addEventListener('click', checkClashes);
+    $('#company-form').addEventListener('submit', createCompany);
+    $('#company-form').addEventListener('input', () => {
+      state.lastClashCheck = null;
+      $('#create-company').disabled = true;
+    });
+    $('#refresh-pipeline').addEventListener('click', loadPipeline);
+    $('#pipeline-stage').addEventListener('change', loadPipeline);
+    $('#pipeline-owner').addEventListener('change', loadPipeline);
+    $('#refresh-followups').addEventListener('click', loadFollowUps);
+    $('#refresh-queue').addEventListener('click', loadQueue);
+    $('#run-queue-now').addEventListener('click', runQueueNow);
+    $('#repair-scheduler').addEventListener('click', repairScheduler);
+    $('#sync-replies').addEventListener('click', syncRepliesNow);
+    $('#refresh-team').addEventListener('click', loadTeamProgress);
+    $('#bulk-email').addEventListener('click', openBulkComposer);
+    $('#composer-form').addEventListener('submit', sendEmail);
+    $('#bulk-form').addEventListener('submit', sendBulkEmail);
+    $('#details-form').addEventListener('submit', saveCompanyDetails);
+    $('#activity-form').addEventListener('submit', saveManualActivity);
+    $('#composer-form [name="templateId"]').addEventListener('change', applyComposerTemplate);
+    $('#composer-form [name="mode"]').addEventListener('change', chooseTemplateForMode);
+    $('#bulk-form [name="templateId"]').addEventListener('change', applyBulkTemplate);
+    $('#member-form').addEventListener('submit', addMember);
+    $('#template-form').addEventListener('submit', saveTemplate);
+    $('#new-template').addEventListener('click', newTemplate);
+    $('#preview-template').addEventListener('click', previewTemplate);
+    $('#send-template-test').addEventListener('click', sendTemplateTestEmail);
+    $('#asset-form').addEventListener('submit', uploadStudioAsset);
+    $('#upload-signature-asset').addEventListener('click', uploadSignatureAsset);
+    $('#edit-signature').addEventListener('click', openSignature);
+    $('#signature-form').addEventListener('submit', saveSignature);
+    $$('.editor-toolbar').forEach(toolbar => toolbar.addEventListener('click', handleEditorToolbarClick));
+    $$('.editor-toolbar [data-font]').forEach(select => select.addEventListener('change', applyEditorFont));
+    $$('.editor-toolbar [data-placeholder]').forEach(select => select.addEventListener('change', insertEditorPlaceholder));
+    $$('[data-close-modal]').forEach(button => button.addEventListener('click', () => closeModal(button.dataset.closeModal)));
+    document.addEventListener('click', handleDynamicClick);
+    document.addEventListener('change', handleDynamicChange);
+    document.addEventListener('selectionchange', rememberEditorSelection);
+  }
+
+  function populateIdentity() {
+    const select = $('#member-select');
+    select.innerHTML = '<option value="">Choose your name</option>' + state.bootstrap.members.map(member =>
+      `<option value="${escapeHtml(member.memberId)}">${escapeHtml(member.memberName)} (${escapeHtml(member.role)})</option>`
+    ).join('');
+  }
+
+  async function applyBrandLogo(logo) {
+    if (!logo || !logo.dataUrl) return;
+    const prepared = await trimTransparentPngDataUrl(logo.dataUrl);
+    $$('[data-brand-logo]').forEach(image => {
+      image.src = prepared.dataUrl;
+      image.alt = logo.altText || '全辩 logo';
+      image.classList.remove('hidden');
+      const mark = image.closest('.brand-mark');
+      mark.classList.add('has-logo');
+      const fallback = mark.querySelector('span');
+      if (fallback) fallback.classList.add('hidden');
+    });
+  }
+
+  function populateStageFilter() {
+    $('#pipeline-stage').innerHTML = '<option value="">All stages</option>' + pipelineStages.map(stage => `<option>${stage}</option>`).join('');
+  }
+
+  async function selectIdentity(event) {
+    event.preventDefault();
+    const submitter = event.submitter;
+    const memberId = $('#member-select').value;
+    if (!memberId) return toast('Choose your committee name.', true);
+    setBusy(submitter, true, 'Opening CRM');
+    try {
+      const session = deviceSession();
+      const result = await server('startMemberSession', memberId, session);
+      state.actor = {
+        memberId: result.member.MemberId,
+        memberName: result.member.MemberName,
+        role: result.member.Role,
+        sessionId: result.sessionId,
+        deviceSummary: session.deviceSummary
+      };
+      state.bootstrap.templates = await server('getActiveTemplates', actorPayload());
+      $('#identity-screen').classList.add('hidden');
+      $('#shell').classList.remove('hidden');
+      $('#sidebar-member').textContent = state.actor.memberName;
+      $('#admin-nav').classList.toggle('hidden', !['Director', 'Admin'].includes(state.actor.role));
+      $$('.admin-only').forEach(element => element.classList.toggle('hidden', !['Director', 'Admin'].includes(state.actor.role)));
+      const canSeeTeam = ['Director', 'Admin'].includes(state.actor.role);
+      $('#pipeline-nav').textContent = canSeeTeam ? 'All companies' : 'My pipeline';
+      populateOwnerFilter();
+      updateQuota(state.bootstrap.quota);
+      navigate('overview');
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(submitter, false);
+    }
+  }
+
+  function switchMember() {
+    state.actor = null;
+    $('#shell').classList.add('hidden');
+    $('#identity-screen').classList.remove('hidden');
+    $('#member-select').value = '';
+    $('.sidebar').classList.remove('open');
+  }
+
+  function navigate(view) {
+    if (['admin', 'studio', 'team'].includes(view) && !['Director', 'Admin'].includes(state.actor.role)) return toast('This area requires Director or Admin access.', true);
+    state.activeView = view;
+    $$('.view').forEach(section => section.classList.toggle('active', section.id === `view-${view}`));
+    $$('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+    const title = titles[view] || titles.overview;
+    $('#page-context').textContent = title[0];
+    $('#page-title').textContent = title[1];
+    $('.sidebar').classList.remove('open');
+    if (view === 'overview') loadDashboard();
+    if (view === 'pipeline') loadPipeline();
+    if (view === 'follow-ups') loadFollowUps();
+    if (view === 'queue') loadQueue();
+    if (view === 'replies') loadReplies();
+    if (view === 'team') loadTeamProgress();
+    if (view === 'studio') loadStudio();
+    if (view === 'admin') loadAdmin();
+  }
+
+  function populateOwnerFilter() {
+    const select = $('#pipeline-owner');
+    if (!select || !state.bootstrap) return;
+    select.innerHTML = '<option value="">All members</option>' + state.bootstrap.members.map(member =>
+      `<option value="${escapeHtml(member.memberId)}">${escapeHtml(member.memberName)}</option>`
+    ).join('');
+  }
+
+  function renderLoading() {
+    $('#summary-grid').innerHTML = Array.from({ length: 5 }, () => '<div class="summary-card"><div class="skeleton"></div><div class="skeleton" style="margin-top:24px;width:45%"></div></div>').join('');
+  }
+
+  async function loadDashboard() {
+    renderLoading();
+    $('#recent-list').innerHTML = loadingRows(4);
+    try {
+      const data = await server('getDashboard', actorPayload());
+      updateQuota(data.quota);
+      const metrics = [
+        [state.actor.role === 'Admin' ? 'Companies across the team' : 'Companies in your pipeline', data.summary.total, 'primary'],
+        ['Follow-ups due', data.summary.due, data.summary.due ? 'warning' : ''],
+        ['New replies', data.summary.replies, data.summary.replies ? 'success' : ''],
+        ['Emails queued', data.summary.queued, ''],
+        ['Confirmed', data.summary.confirmed, 'success']
+      ];
+      $('#summary-grid').innerHTML = metrics.map(item => `<article class="summary-card ${item[2]}"><span>${escapeHtml(item[0])}</span><strong>${item[1]}</strong></article>`).join('');
+      renderRecords($('#recent-list'), data.recent);
+      $('#attention-list').innerHTML = [
+        ['Follow-ups overdue or due', data.summary.due],
+        ['Replies awaiting action', data.summary.replies],
+        ['Scheduled or queued emails', data.summary.queued]
+      ].map(item => `<div class="attention-item"><span>${escapeHtml(item[0])}</span><strong>${item[1]}</strong></div>`).join('');
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  function companyPayload() {
+    return formObject($('#company-form'));
+  }
+
+  async function checkClashes() {
+    const payload = companyPayload();
+    if (!payload.companyName.trim()) return toast('Enter the company name first.', true);
+    setBusy($('#check-clash'), true, 'Checking');
+    $('#match-results').className = 'match-results';
+    $('#match-results').innerHTML = loadingRows(3);
+    try {
+      const result = await server('searchCompanies', payload, actorPayload());
+      state.lastClashCheck = { payload: JSON.stringify(payload), result };
+      renderMatches(result.candidates);
+      $('#create-company').disabled = !result.canCreate;
+      if (!result.candidates.length) toast('No likely clash found. You can create and reserve this company.');
+    } catch (error) {
+      $('#match-results').innerHTML = emptyState('Clash check failed', error.message);
+      toast(error.message, true);
+    } finally {
+      setBusy($('#check-clash'), false);
+    }
+  }
+
+  function renderMatches(candidates) {
+    if (!candidates.length) {
+      $('#match-results').innerHTML = `<div class="notice" style="background:var(--success-soft);color:var(--success)"><strong>No likely clash found</strong><p>You may create and reserve this company.</p></div>`;
+      return;
+    }
+    $('#match-results').innerHTML = candidates.map(candidate => {
+      const className = candidate.score >= 90 ? 'high' : candidate.score >= 72 ? 'review' : '';
+      return `<article class="match-card ${className}">
+        <div class="match-head"><strong>${escapeHtml(candidate.displayName)}</strong><span class="status ${candidate.score >= 90 ? 'danger' : candidate.score >= 72 ? 'warning' : ''}">${candidate.score}% match</span></div>
+        <p>${escapeHtml(candidate.reasons.join(', ') || 'Similar record')}</p>
+        <div class="match-details"><span>Owner</span><strong>${escapeHtml(candidate.ownerName || 'Not reserved')}</strong><span>Stage</span><strong>${escapeHtml(candidate.pipelineStage || 'No active approach')}</strong></div>
+        <button class="button secondary compact" data-claim-company="${escapeHtml(candidate.companyId)}" type="button">Use this company</button>
+      </article>`;
+    }).join('');
+  }
+
+  async function createCompany(event) {
+    event.preventDefault();
+    const submitter = event.submitter;
+    const payload = companyPayload();
+    if (!state.lastClashCheck || state.lastClashCheck.payload !== JSON.stringify(payload)) return toast('Run the clash check again before creating this company.', true);
+    setBusy(submitter, true, 'Creating');
+    try {
+      const result = await server('createCompanyAndReserve', payload, actorPayload());
+      if (result.reviewRequired) {
+        renderMatches(result.candidates);
+        $('#create-company').disabled = true;
+        return toast('A director must resolve the possible duplicate before this company can be created.', true);
+      }
+      toast('Company created and reserved under your name.');
+      $('#company-form').reset();
+      state.lastClashCheck = null;
+      $('#create-company').disabled = true;
+      $('#match-results').innerHTML = emptyState('Ready for another company', 'Enter the next company and run the clash check.');
+      navigate('pipeline');
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(submitter, false);
+    }
+  }
+
+  async function claimCompany(companyId, button) {
+    setBusy(button, true, 'Claiming');
+    try {
+      const result = await server('claimExistingCompany', companyId, actorPayload());
+      if (result.conflict) return toast(`This company is already assigned to ${result.ownerName} at ${result.pipelineStage}.`, true);
+      toast(result.existing ? 'This company is already in your pipeline.' : 'Existing company reserved under your name.');
+      navigate('pipeline');
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function loadPipeline() {
+    $('#pipeline-table').innerHTML = loadingRows(6);
+    try {
+      const rows = await server('getMyPipeline', actorPayload(), { stage: $('#pipeline-stage').value, ownerMemberId: $('#pipeline-owner').value });
+      renderPipelineTable(rows);
+    } catch (error) {
+      $('#pipeline-table').innerHTML = emptyState('Unable to load pipeline', error.message);
+      toast(error.message, true);
+    }
+  }
+
+  function renderPipelineTable(rows) {
+    state.pipelineRows = rows;
+    if (!rows.length) return $('#pipeline-table').innerHTML = emptyState('No companies in this view', 'Add a company or choose another stage.');
+    $('#pipeline-table').innerHTML = `<table><thead><tr><th><input type="checkbox" data-select-all aria-label="Select all"></th><th>Company</th><th>Owner</th><th>Stage</th><th>Next follow-up</th><th>Actions</th></tr></thead><tbody>${rows.map(row => `
+      <tr>
+        <td><input type="checkbox" data-bulk-select="${escapeHtml(row.ApproachId)}" ${row.PrimaryEmail ? '' : 'disabled'} aria-label="Select ${escapeHtml(row.CompanyName)}"></td>
+        <td><strong>${escapeHtml(row.CompanyName)}</strong><div class="record-meta">${escapeHtml(row.PrimaryEmail || row.Industry || 'Contact not added')}</div></td>
+        <td>${escapeHtml(row.OwnerName)}</td>
+        <td><select data-stage-change="${escapeHtml(row.ApproachId)}" aria-label="Update stage">${pipelineStages.map(stage => `<option ${stage === row.PipelineStage ? 'selected' : ''}>${stage}</option>`).join('')}</select></td>
+        <td>${row.NextFollowUpAt ? formatDate(row.NextFollowUpAt) : 'Not scheduled'}${row.IsFollowUpDue ? '<div><span class="status warning">Due</span></div>' : ''}</td>
+        <td><div class="record-actions"><button class="button secondary compact" data-details="${escapeHtml(row.ApproachId)}">Details</button><button class="button secondary compact" data-activity="${escapeHtml(row.ApproachId)}">Log activity</button><button class="button primary compact" data-compose="${escapeHtml(row.ApproachId)}">Email</button></div></td>
+      </tr>`).join('')}</tbody></table>`;
+  }
+
+  async function loadFollowUps() {
+    $('#followup-list').innerHTML = loadingRows(5);
+    try {
+      const rows = await server('getMyPipeline', actorPayload(), { dueOnly: true });
+      renderRecords($('#followup-list'), rows, true);
+    } catch (error) {
+      $('#followup-list').innerHTML = emptyState('Unable to load follow-ups', error.message);
+    }
+  }
+
+  function renderRecords(container, rows, followUpMode = false) {
+    if (!rows.length) return container.innerHTML = emptyState(followUpMode ? 'Nothing due' : 'No recent companies', followUpMode ? 'Your follow-up queue is clear.' : 'Add your first company to begin.');
+    container.innerHTML = rows.map(row => `<article class="record-row">
+      <div class="record-main"><strong>${escapeHtml(row.CompanyName)}</strong><span>${escapeHtml(row.PrimaryEmail || row.Industry || 'Contact details incomplete')}</span></div>
+      <div><span class="status ${stageClass(row.PipelineStage)}">${escapeHtml(row.PipelineStage)}</span></div>
+      <div class="record-meta">${followUpMode ? `Due ${formatDate(row.NextFollowUpAt)}` : `Owner: ${escapeHtml(row.OwnerName)}`}</div>
+      <div class="record-actions"><button class="button secondary compact" data-details="${escapeHtml(row.ApproachId)}">Details</button><button class="button secondary compact" data-activity="${escapeHtml(row.ApproachId)}">Log activity</button><button class="button primary compact" data-compose="${escapeHtml(row.ApproachId)}">${followUpMode ? 'Follow up' : 'Email'}</button></div>
+    </article>`).join('');
+  }
+
+  async function requestApproval(approachId, button) {
+    setBusy(button, true, 'Submitting');
+    try {
+      await server('submitForApproval', approachId, actorPayload());
+      toast('Approach submitted for approval.');
+      state.activeView === 'overview' ? loadDashboard() : loadPipeline();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function openComposer(approachId, button) {
+    setBusy(button, true, 'Opening');
+    try {
+      const data = await server('getComposerData', approachId, actorPayload());
+      state.composerData = data;
+      const form = $('#composer-form');
+      form.reset();
+      form.elements.approachId.value = approachId;
+      form.elements.to.value = data.contacts.map(contact => contact.Email).filter(Boolean).join(', ');
+      form.elements.contactName.value = data.contacts.map(contact => contact.ContactName).filter(Boolean)[0] || '';
+      populateEmailModeSelect(form.elements.mode, data.templates, data.approach.GmailThreadId ? 'Follow-up' : 'First Approach');
+      form.elements.templateId.innerHTML = data.templates.map(template => `<option value="${escapeHtml(template.templateId)}">${escapeHtml(template.name)}</option>`).join('');
+      chooseTemplateForMode();
+      $('#composer-modal').classList.remove('hidden');
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  function chooseTemplateForMode() {
+    if (!state.composerData) return;
+    const form = $('#composer-form');
+    const mode = form.elements.mode.value;
+    const match = state.composerData.templates.find(template => template.type === mode) || state.composerData.templates[0];
+    if (match) form.elements.templateId.value = match.templateId;
+    applyComposerTemplate();
+  }
+
+  function applyComposerTemplate() {
+    if (!state.composerData) return;
+    const form = $('#composer-form');
+    const template = state.composerData.templates.find(item => item.templateId === form.elements.templateId.value);
+    if (!template) return;
+    populateEmailModeSelect(form.elements.mode, state.composerData.templates, template.type);
+    form.elements.subject.value = template.subject;
+    setEditorHtml($('#composer-editor'), template.htmlBody);
+  }
+
+  async function sendEmail(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    syncEditorToInput($('#composer-editor'), form.elements.htmlBody);
+    const request = formObject(form);
+    if (request.sendOption === 'schedule' && !request.scheduledAt) return toast('Choose the scheduled date and time.', true);
+    request.scheduledAtIso = request.sendOption === 'schedule' && request.scheduledAt ? new Date(request.scheduledAt).toISOString() : new Date().toISOString();
+    if (!confirm(request.sendOption === 'schedule' ? 'Add this email to the shared schedule?' : 'Send this email now from the shared Marketing Gmail?')) return;
+    setBusy(submitter, true, 'Sending');
+    try {
+      request.attachmentFileIds = await uploadPdfInput($('#composer-attachments'));
+      const result = await server('queueApproachEmail', request, actorPayload());
+      updateQuota(result.capacity);
+      closeModal('composer-modal');
+      toast(result.sent ? 'Email sent and tracking started.' : `Email scheduled for ${formatDate(result.scheduledAt)}.`);
+      state.activeView === 'follow-ups' ? loadFollowUps() : loadPipeline();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  function openBulkComposer() {
+    const ids = $$('[data-bulk-select]:checked').map(box => box.dataset.bulkSelect);
+    if (!ids.length) return toast('Select at least one company with an email address.', true);
+    const form = $('#bulk-form');
+    form.reset();
+    form.dataset.approachIds = JSON.stringify(ids);
+    form.elements.templateId.innerHTML = state.bootstrap.templates.map(template => `<option value="${escapeHtml(template.templateId)}">${escapeHtml(template.name)}</option>`).join('');
+    populateEmailModeSelect(form.elements.mode, state.bootstrap.templates, state.bootstrap.templates[0] && state.bootstrap.templates[0].type);
+    $('#bulk-count').textContent = `${ids.length} companies selected. Each will receive a separate personalized email.`;
+    applyBulkTemplate();
+    $('#bulk-modal').classList.remove('hidden');
+  }
+
+  function applyBulkTemplate() {
+    const form = $('#bulk-form');
+    const template = state.bootstrap.templates.find(item => item.templateId === form.elements.templateId.value);
+    if (!template) return;
+    form.elements.subject.value = template.subject;
+    setEditorHtml($('#bulk-editor'), template.htmlBody);
+    populateEmailModeSelect(form.elements.mode, state.bootstrap.templates, template.type);
+  }
+
+  async function sendBulkEmail(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    syncEditorToInput($('#bulk-editor'), form.elements.htmlBody);
+    const request = formObject(form);
+    request.approachIds = JSON.parse(form.dataset.approachIds || '[]');
+    if (request.sendOption === 'schedule' && !request.scheduledAt) return toast('Choose the scheduled date and time.', true);
+    request.scheduledAtIso = request.sendOption === 'schedule' && request.scheduledAt ? new Date(request.scheduledAt).toISOString() : new Date().toISOString();
+    if (!confirm(`Queue ${request.approachIds.length} separate personalized emails?`)) return;
+    setBusy(submitter, true, 'Queuing');
+    try {
+      request.attachmentFileIds = await uploadPdfInput($('#bulk-attachments'));
+      const result = await server('queueBulkEmails', request, actorPayload());
+      updateQuota(result.capacity);
+      closeModal('bulk-modal');
+      toast(`${result.sent} sent now; ${result.queued} remain scheduled in the queue${result.failed ? `; ${result.failed} need retry` : ''}.`);
+      loadPipeline();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  async function loadReplies() {
+    $('#reply-list').innerHTML = loadingRows(4);
+    $('#system-reply-list').innerHTML = loadingRows(4);
+    try {
+      const data = await server('getRepliesAwaitingAction', actorPayload());
+      const rows = data.humanReplies || [];
+      const automated = data.automatedResponses || [];
+      $('#human-reply-count').textContent = rows.length;
+      $('#system-reply-count').textContent = automated.length;
+      $('#reply-list').innerHTML = rows.length ? rows.map(row => `<article class="record-row inbox-row">
+        <div class="record-main"><strong>${escapeHtml(row.CompanyName)}</strong><span>${escapeHtml(row.LastReplyFrom || row.PrimaryEmail || '')}</span></div>
+        <div class="record-meta">${escapeHtml(row.ReplySnippet || 'Reply received')}</div>
+        <div><span class="status accent">${formatDate(row.LastReplyAt)}</span></div>
+        <div class="record-actions"><a class="button secondary compact" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(row.GmailThreadId)}" target="_blank" rel="noopener">Open Gmail</a><button class="button primary compact" data-reply-handled="${escapeHtml(row.ApproachId)}">Mark handled</button></div>
+      </article>`).join('') : emptyState('No human replies awaiting action', 'New recipient replies will appear here after Gmail sync.');
+      $('#system-reply-list').innerHTML = automated.length ? automated.map(row => `<article class="record-row inbox-row system-message">
+        <div class="record-main"><strong>${escapeHtml(row.CompanyName)}</strong><span>${escapeHtml(row.LastInboundFrom || row.PrimaryEmail || '')}</span></div>
+        <div class="record-meta"><span class="status ${['Delivery failed', 'Mailbox full'].includes(row.LastInboundType) ? 'danger' : ''}">${escapeHtml(row.LastInboundType || 'Automated response')}</span><br>${escapeHtml(row.LastInboundSnippet || '')}</div>
+        <div class="record-meta">${formatDate(row.LastInboundAt)}</div>
+        <div class="record-actions"><a class="button secondary compact" href="https://mail.google.com/mail/u/0/#all/${encodeURIComponent(row.GmailThreadId)}" target="_blank" rel="noopener">Open Gmail</a><button class="button secondary compact" data-system-handled="${escapeHtml(row.ApproachId)}">Mark reviewed</button></div>
+      </article>`).join('') : emptyState('No automated messages to review', 'Delivery failures and automatic notices will appear separately here.');
+    } catch (error) {
+      $('#reply-list').innerHTML = emptyState('Unable to load replies', error.message);
+      $('#system-reply-list').innerHTML = emptyState('Unable to load automated messages', error.message);
+    }
+  }
+
+  async function loadQueue() {
+    $('#queue-list').innerHTML = loadingRows(5);
+    try {
+      const results = await Promise.all([server('getEmailQueue', actorPayload()), server('getSchedulerStatus', actorPayload())]);
+      const rows = results[0];
+      const scheduler = results[1];
+      $('#scheduler-status').className = `notice ${scheduler.active ? '' : 'warning'}`;
+      $('#scheduler-status').innerHTML = `<strong>Scheduler: ${scheduler.active ? 'Active' : 'Missing'}</strong> · Last run: ${scheduler.lastRunAt ? formatDate(scheduler.lastRunAt) : 'Not recorded yet'} · Timezone: ${escapeHtml(scheduler.timezone)}`;
+      $('#queue-list').innerHTML = rows.length ? rows.map(row => `<article class="record-row">
+        <div class="record-main"><strong>${escapeHtml(row.CompanyName)}</strong><span>${escapeHtml(row.To || '')}</span></div>
+        <div><span class="status ${row.Status === 'Sent' ? 'success' : row.Status === 'Failed' ? 'danger' : row.Status === 'Scheduled' || row.Status === 'Retry' ? 'warning' : ''}">${escapeHtml(row.Status)}</span></div>
+        <div class="record-meta">${row.Status === 'Sent' ? `Sent ${formatDate(row.SentAt)}` : `Scheduled ${formatDate(row.ScheduledAt)}`}${row.LastError ? `<br>${escapeHtml(row.LastError)}` : ''}</div>
+        <div class="record-actions">${['Scheduled', 'Retry'].includes(row.Status) ? `<button class="button secondary compact" data-cancel-queue="${escapeHtml(row.QueueId)}">Cancel</button>` : ''}</div>
+      </article>`).join('') : emptyState('Email queue is empty', 'Scheduled and recently sent emails will appear here.');
+    } catch (error) { $('#queue-list').innerHTML = emptyState('Unable to load email queue', error.message); }
+  }
+
+  async function runQueueNow() {
+    setBusy($('#run-queue-now'), true, 'Processing');
+    try { const result = await server('runEmailQueueNow', actorPayload()); toast(`${result.sent} sent; ${result.failed} need retry.`); loadQueue(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy($('#run-queue-now'), false); }
+  }
+
+  async function repairScheduler() {
+    setBusy($('#repair-scheduler'), true, 'Repairing');
+    try { await server('repairEmailScheduler', actorPayload()); toast('Email scheduler recreated and activated.'); loadQueue(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy($('#repair-scheduler'), false); }
+  }
+
+  async function cancelQueue(queueId, button) {
+    if (!confirm('Cancel this scheduled email?')) return;
+    setBusy(button, true, 'Cancelling');
+    try { await server('cancelQueuedEmail', queueId, actorPayload()); toast('Scheduled email cancelled.'); loadQueue(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function syncRepliesNow() {
+    setBusy($('#sync-replies'), true, 'Syncing');
+    try {
+      const result = await server('syncGmailReplies', actorPayload());
+      $('#reply-sync-status').className = `notice ${result.errors ? 'warning' : ''}`;
+      $('#reply-sync-status').innerHTML = `<strong>Gmail sync completed</strong><br>Checked ${result.checked} of ${result.tracked} tracked conversations in ${result.durationSeconds}s. Human replies: ${result.replies}. Automated messages: ${result.automated || 0}. Delivery issues: ${result.deliveryIssues || 0}${result.errors ? `. ${result.errors} conversation${result.errors === 1 ? '' : 's'} could not be checked` : ''}.`;
+      toast(`Gmail sync completed. ${result.replies} human replies and ${result.automated || 0} automated messages found.`);
+      await loadReplies();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy($('#sync-replies'), false); }
+  }
+
+  async function handleReply(approachId, button) {
+    setBusy(button, true, 'Saving');
+    try { await server('markReplyHandled', approachId, 'Negotiating', actorPayload()); toast('Reply marked handled and moved to Negotiating.'); loadReplies(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function handleSystemResponse(approachId, button) {
+    setBusy(button, true, 'Saving');
+    try { await server('markSystemResponseHandled', approachId, actorPayload()); toast('Automated message marked reviewed.'); loadReplies(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function loadTeamProgress() {
+    $('#team-summary').innerHTML = Array.from({ length: 5 }, () => '<div class="summary-card"><div class="skeleton"></div><div class="skeleton" style="margin-top:20px;width:42%"></div></div>').join('');
+    $('#team-progress-table').innerHTML = loadingRows(6);
+    try {
+      const data = await server('getTeamProgress', actorPayload());
+      const metrics = [
+        ['Companies', data.totals.total, 'primary'],
+        ['Approached', data.totals.approached, ''],
+        ['Human replies', data.totals.replied, ''],
+        ['Confirmed', data.totals.confirmed, ''],
+        ['Delivery issues', data.totals.deliveryIssues, data.totals.deliveryIssues ? 'warning' : '']
+      ];
+      $('#team-summary').innerHTML = metrics.map(item => `<article class="summary-card ${item[2]}"><span>${escapeHtml(item[0])}</span><strong>${item[1]}</strong></article>`).join('');
+      if (!data.members.length) return $('#team-progress-table').innerHTML = emptyState('No active members', 'Add committee members from Admin review.');
+      $('#team-progress-table').innerHTML = `<table class="team-table"><thead><tr><th>Member</th><th>Companies</th><th>Approached</th><th>Human replies</th><th>Response rate</th><th>Confirmed</th><th>Due</th><th>Delivery issues</th><th>Last activity</th><th></th></tr></thead><tbody>${data.members.map(member => `<tr>
+        <td><strong>${escapeHtml(member.memberName)}</strong><div class="record-meta">${escapeHtml(member.role)}</div></td>
+        <td class="number-cell">${member.total}</td><td class="number-cell">${member.approached}</td><td class="number-cell">${member.replied}</td><td class="number-cell">${member.responseRate}%</td><td class="number-cell">${member.confirmed}</td><td class="number-cell">${member.due}</td><td class="number-cell">${member.deliveryIssues}</td><td>${member.lastActivity ? formatDate(member.lastActivity) : 'No activity'}</td>
+        <td><button class="button secondary compact" type="button" data-view-member="${escapeHtml(member.memberId)}">View companies</button></td>
+      </tr>`).join('')}</tbody></table>`;
+    } catch (error) {
+      $('#team-summary').innerHTML = '';
+      $('#team-progress-table').innerHTML = emptyState('Unable to load team progress', error.message);
+      toast(error.message, true);
+    }
+  }
+
+  async function openSignature() {
+    try {
+      const results = await Promise.all([server('getMySignature', actorPayload()), server('getEmailStudioData', actorPayload())]);
+      const profile = results[0];
+      state.studio.assets = results[1].assets || [];
+      const form = $('#signature-form');
+      form.elements.title.value = profile.title || '';
+      form.elements.email.value = profile.email || '';
+      form.elements.phone.value = profile.phone || '';
+      form.elements.notificationEmail.value = profile.notificationEmail || '';
+      form.elements.notifyOnReplies.value = profile.notifyOnReplies ? 'true' : 'false';
+      setEditorHtml($('#signature-editor'), profile.signatureHtml || defaultSignatureHtml());
+      renderAssetPickers();
+      $('#signature-modal').classList.remove('hidden');
+    } catch (error) { toast(error.message, true); }
+  }
+
+  async function saveSignature(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    syncEditorToInput($('#signature-editor'), form.elements.signatureHtml);
+    setBusy(submitter, true, 'Saving');
+    try { await server('updateMySignature', formObject(form), actorPayload()); closeModal('signature-modal'); toast('Your email signature was updated.'); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  async function loadStudio() {
+    $('#template-library').innerHTML = loadingRows(3);
+    $('#asset-library').innerHTML = loadingRows(2);
+    try {
+      const data = await server('getEmailStudioData', actorPayload());
+      state.studio.templates = data.templates || [];
+      state.studio.assets = data.assets || [];
+      renderTemplateLibrary();
+      renderAssetPickers();
+      if (state.studio.selectedTemplateId) selectTemplate(state.studio.selectedTemplateId);
+      else if (state.studio.templates.length) selectTemplate(state.studio.templates[0].templateId);
+      else newTemplate();
+    } catch (error) {
+      $('#template-library').innerHTML = emptyState('Unable to load templates', error.message);
+      toast(error.message, true);
+    }
+  }
+
+  function renderTemplateLibrary() {
+    $('#template-library').innerHTML = state.studio.templates.length ? state.studio.templates.map(template => `<button class="template-list-item ${template.templateId === state.studio.selectedTemplateId ? 'active' : ''}" type="button" data-template-select="${escapeHtml(template.templateId)}"><span><strong>${escapeHtml(template.name)}</strong><small>${escapeHtml(template.type)} | Version ${template.version}</small></span><span class="status ${template.status === 'Published' ? 'success' : 'warning'}">${escapeHtml(template.status)}</span></button>`).join('') : emptyState('No templates yet', 'Create the first email design.');
+  }
+
+  function newTemplate() {
+    state.studio.selectedTemplateId = '';
+    const form = $('#template-form');
+    form.reset();
+    form.elements.templateId.value = '';
+    form.elements.type.value = 'First Approach';
+    $('#studio-editor-title').textContent = 'New email template';
+    $('#template-version-label').textContent = 'Not saved yet';
+    setEditorHtml($('#template-editor'), '<p>Dear {{ContactName}},</p><p></p><p>{{MemberSignature}}</p>');
+    renderTemplateLibrary();
+    renderAssetPickers();
+    renderEmailTypeOptions();
+  }
+
+  function selectTemplate(templateId) {
+    const template = state.studio.templates.find(item => item.templateId === templateId);
+    if (!template) return;
+    state.studio.selectedTemplateId = templateId;
+    const form = $('#template-form');
+    form.elements.templateId.value = template.templateId;
+    form.elements.name.value = template.name;
+    form.elements.type.value = template.type;
+    form.elements.subject.value = template.subject;
+    $('#studio-editor-title').textContent = template.name;
+    $('#template-version-label').textContent = `Version ${template.version} | ${template.status} | Updated ${formatDate(template.updatedAt)}`;
+    setEditorHtml($('#template-editor'), template.htmlBody);
+    renderTemplateLibrary();
+    renderAssetPickers(template.defaultAttachmentAssetIds || []);
+    renderEmailTypeOptions();
+  }
+
+  async function saveTemplate(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    syncEditorToInput($('#template-editor'), form.elements.htmlBody);
+    const payload = formObject(form);
+    payload.status = submitter.value || 'Published';
+    payload.defaultAttachmentAssetIds = $$('[data-default-pdf]:checked').map(input => input.value);
+    setBusy(submitter, true, 'Saving');
+    try {
+      const saved = await server('saveEmailTemplate', payload, actorPayload());
+      state.studio.selectedTemplateId = saved.templateId;
+      state.bootstrap.templates = await server('getActiveTemplates', actorPayload());
+      await loadStudio();
+      toast(saved.status === 'Published' ? 'Template published for all members.' : 'Template draft saved.');
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  async function uploadStudioAsset(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    const file = form.elements.file.files[0];
+    if (!file) return toast('Choose an image or PDF.', true);
+    setBusy(submitter, true, 'Uploading');
+    try {
+      const payload = formObject(form);
+      delete payload.file;
+      Object.assign(payload, await filePayload(file));
+      await server('uploadEmailAsset', payload, actorPayload());
+      form.reset();
+      const data = await server('getEmailStudioData', actorPayload());
+      state.studio.assets = data.assets || [];
+      renderAssetPickers(selectedDefaultPdfIds());
+      toast('Asset saved in the CRM library.');
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  async function uploadSignatureAsset(event) {
+    const button = event.currentTarget;
+    const container = $('#signature-asset-fields');
+    const nameInput = container.querySelector('[name="name"]');
+    const websiteInput = container.querySelector('[name="websiteUrl"]');
+    const fileInput = container.querySelector('[name="file"]');
+    const file = fileInput.files[0];
+    if (!nameInput.value.trim()) return toast('Give this picture a clear name.', true);
+    if (!file) return toast('Choose a PNG, JPG, GIF or WebP image.', true);
+    setBusy(button, true, 'Uploading');
+    try {
+      const payload = await filePayload(file);
+      payload.name = nameInput.value.trim();
+      payload.websiteUrl = websiteInput.value.trim();
+      payload.altText = nameInput.value.trim();
+      const savedAsset = await server('uploadEmailAsset', payload, actorPayload());
+      nameInput.value = '';
+      websiteInput.value = '';
+      fileInput.value = '';
+      const data = await server('getEmailStudioData', actorPayload());
+      state.studio.assets = data.assets || [];
+      renderAssetPickers(selectedDefaultPdfIds());
+      const insertButton = $(`#signature-image-assets [data-insert-asset="${savedAsset.assetId}"]`);
+      if (insertButton) await insertAsset(savedAsset.assetId, insertButton, true);
+      toast('Picture uploaded and inserted into your signature.');
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function setBrandLogo(assetId, button) {
+    setBusy(button, true, 'Applying');
+    try {
+      await server('setBrandLogoAsset', assetId, actorPayload());
+      applyBrandLogo(await server('getBrandLogoData'));
+      await loadStudio();
+      toast('CRM logo updated.');
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  function renderAssetPickers(selectedPdfIds) {
+    const images = state.studio.assets.filter(asset => asset.assetType === 'Image');
+    const pdfs = state.studio.assets.filter(asset => asset.assetType === 'PDF');
+    const imageHtml = images.length ? images.map(asset => `<button class="asset-choice" type="button" data-insert-asset="${escapeHtml(asset.assetId)}" aria-label="Insert ${escapeHtml(asset.name)}"><span class="asset-kind">IMG</span><span class="asset-copy"><strong>${escapeHtml(asset.name)}</strong><small>${escapeHtml(asset.websiteUrl ? 'Linked to ' + asset.websiteUrl : asset.fileName)}</small></span><span class="asset-insert-label">Insert</span></button>`).join('') : '<p class="muted-copy">Upload a picture or logo first.</p>';
+    const selected = new Set(selectedPdfIds || selectedDefaultPdfIds());
+    const pdfHtml = pdfs.length ? pdfs.map(asset => `<label class="asset-choice check-choice"><input type="checkbox" data-default-pdf value="${escapeHtml(asset.assetId)}" ${selected.has(asset.assetId) ? 'checked' : ''}><span class="asset-kind">PDF</span><span><strong>${escapeHtml(asset.name)}</strong><small>${escapeHtml(asset.fileName)}</small></span></label>`).join('') : '<p class="muted-copy">Upload a proposal PDF first.</p>';
+    if ($('#template-image-assets')) $('#template-image-assets').innerHTML = imageHtml;
+    if ($('#signature-image-assets')) $('#signature-image-assets').innerHTML = imageHtml;
+    if ($('#template-pdf-assets')) $('#template-pdf-assets').innerHTML = pdfHtml;
+    if ($('#asset-library')) $('#asset-library').innerHTML = state.studio.assets.length ? state.studio.assets.map(asset => `<article class="asset-row"><span class="asset-kind">${asset.assetType === 'Image' ? 'IMG' : 'PDF'}</span><span><strong>${escapeHtml(asset.name)}</strong><small>${escapeHtml(asset.fileName)} | ${escapeHtml(asset.uploadedBy || '')}</small></span><span class="record-actions">${asset.assetType === 'Image' ? asset.isBrandLogo ? '<span class="status success">CRM logo</span>' : `<button class="button secondary compact" type="button" data-set-brand-logo="${escapeHtml(asset.assetId)}">Use as CRM logo</button>` : ''}</span></article>`).join('') : emptyState('Asset library is empty', 'Upload logos, pictures or an official PDF.');
+  }
+
+  function emailTypesFromTemplates(templates) {
+    const ordered = ['First Approach', 'Follow-up'];
+    (templates || []).forEach(template => {
+      const type = String(template.type || '').trim();
+      if (type && !ordered.some(item => item.toLowerCase() === type.toLowerCase())) ordered.push(type);
+    });
+    return ordered;
+  }
+
+  function renderEmailTypeOptions() {
+    const list = $('#email-type-options');
+    if (!list) return;
+    list.innerHTML = emailTypesFromTemplates(state.studio.templates).map(type => `<option value="${escapeHtml(type)}"></option>`).join('');
+  }
+
+  function populateEmailModeSelect(select, templates, preferredType) {
+    if (!select) return;
+    const types = emailTypesFromTemplates(templates);
+    select.innerHTML = types.map(type => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join('');
+    const preferred = types.find(type => type.toLowerCase() === String(preferredType || '').toLowerCase());
+    select.value = preferred || types[0];
+  }
+
+  function selectedDefaultPdfIds() {
+    return $$('[data-default-pdf]:checked').map(input => input.value);
+  }
+
+  async function insertAsset(assetId, button, silent) {
+    const asset = state.studio.assets.find(item => item.assetId === assetId);
+    if (!asset || asset.assetType !== 'Image') return;
+    const editor = button.closest('#signature-modal') ? $('#signature-editor') : $('#template-editor');
+    setBusy(button, true, 'Loading');
+    try {
+      const dataUrl = await server('getEmailAssetPreview', assetId, actorPayload());
+      const defaultWidth = editor.id === 'signature-editor' ? '180px' : '75%';
+      const image = `<img src="${dataUrl}" data-cid="${escapeHtml(asset.assetId)}" data-asset-id="${escapeHtml(asset.assetId)}" alt="${escapeHtml(asset.altText || asset.name)}" style="width:${defaultWidth};max-width:100%;height:auto">`;
+      insertHtmlAtEditor(editor, asset.websiteUrl ? `<a href="${escapeHtml(asset.websiteUrl)}" target="_blank">${image}</a>` : image);
+      const inserted = Array.from(editor.querySelectorAll('img[data-asset-id]')).filter(image => image.dataset.assetId === asset.assetId).pop();
+      if (inserted) selectEditorImage(inserted);
+      if (!silent) toast(`${asset.name} inserted. Click the picture to change its size.`);
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  function previewTemplate() {
+    syncEditorToInput($('#template-editor'), $('#template-form').elements.htmlBody);
+    const html = sampleMerge($('#template-editor').innerHTML);
+    $('#preview-subject').textContent = sampleMerge($('#template-form').elements.subject.value);
+    $('#email-preview').srcdoc = `<!doctype html><html><body style="margin:24px;font-family:'Times New Roman',serif;color:#202020">${html}</body></html>`;
+    $('#preview-modal').classList.remove('hidden');
+  }
+
+  async function sendTemplateTestEmail() {
+    const button = $('#send-template-test');
+    syncEditorToInput($('#template-editor'), $('#template-form').elements.htmlBody);
+    const payload = formObject($('#template-form'));
+    payload.to = $('#template-test-email').value;
+    payload.defaultAttachmentAssetIds = selectedDefaultPdfIds();
+    setBusy(button, true, 'Sending');
+    try { await server('sendTemplateTest', payload, actorPayload()); toast('Test email sent.'); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function uploadPdfInput(input) {
+    const files = Array.from(input && input.files || []);
+    if (!files.length) return [];
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    if (total > 20 * 1024 * 1024) throw new Error('PDF attachments exceed the 20 MB CRM limit.');
+    const payload = await Promise.all(files.map(file => new Promise((resolve, reject) => {
+      if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) return reject(new Error('Only PDF attachments are accepted.'));
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: file.name, mimeType: 'application/pdf', size: file.size, base64: String(reader.result).split(',')[1] });
+      reader.onerror = () => reject(new Error('Unable to read ' + file.name));
+      reader.readAsDataURL(file);
+    })));
+    return server('uploadEmailAttachments', payload, actorPayload());
+  }
+
+  function filePayload(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const originalDataUrl = String(reader.result);
+          const isPng = file.type === 'image/png' || /\.png$/i.test(file.name);
+          const prepared = isPng ? await trimTransparentPngDataUrl(originalDataUrl) : { dataUrl: originalDataUrl, trimmed: false };
+          const base64 = prepared.dataUrl.split(',')[1];
+          resolve({
+            fileName: file.name,
+            mimeType: isPng ? 'image/png' : file.type || (/\.pdf$/i.test(file.name) ? 'application/pdf' : ''),
+            size: base64ByteLength(base64),
+            base64: base64,
+            transparentMarginsRemoved: prepared.trimmed
+          });
+        } catch (error) { reject(error); }
+      };
+      reader.onerror = () => reject(new Error('Unable to read ' + file.name));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function base64ByteLength(base64) {
+    const clean = String(base64 || '').replace(/\s/g, '');
+    return Math.max(0, Math.floor(clean.length * 3 / 4) - (clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0));
+  }
+
+  function trimTransparentPngDataUrl(dataUrl) {
+    if (!/^data:image\/png(?:;|,)/i.test(String(dataUrl || ''))) return Promise.resolve({ dataUrl: dataUrl, trimmed: false });
+    return new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => {
+        const width = image.naturalWidth;
+        const height = image.naturalHeight;
+        if (!width || !height || width * height > 24000000) return resolve({ dataUrl: dataUrl, trimmed: false });
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0);
+        let pixels;
+        try { pixels = context.getImageData(0, 0, width, height).data; }
+        catch (ignore) { return resolve({ dataUrl: dataUrl, trimmed: false }); }
+        let left = width;
+        let top = height;
+        let right = -1;
+        let bottom = -1;
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            if (pixels[(y * width + x) * 4 + 3] <= 8) continue;
+            if (x < left) left = x;
+            if (x > right) right = x;
+            if (y < top) top = y;
+            if (y > bottom) bottom = y;
+          }
+        }
+        if (right < left || bottom < top) return resolve({ dataUrl: dataUrl, trimmed: false });
+        const pad = Math.max(2, Math.round(Math.max(width, height) * 0.008));
+        left = Math.max(0, left - pad);
+        top = Math.max(0, top - pad);
+        right = Math.min(width - 1, right + pad);
+        bottom = Math.min(height - 1, bottom + pad);
+        if (left === 0 && top === 0 && right === width - 1 && bottom === height - 1) return resolve({ dataUrl: dataUrl, trimmed: false });
+        const cropped = document.createElement('canvas');
+        cropped.width = right - left + 1;
+        cropped.height = bottom - top + 1;
+        cropped.getContext('2d').drawImage(canvas, left, top, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height);
+        resolve({ dataUrl: cropped.toDataURL('image/png'), trimmed: true, width: cropped.width, height: cropped.height });
+      };
+      image.onerror = () => resolve({ dataUrl: dataUrl, trimmed: false });
+      image.src = dataUrl;
+    });
+  }
+
+  function rememberEditorSelection() {
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    const node = selection.anchorNode;
+    const editor = node && (node.nodeType === 1 ? node : node.parentElement).closest && (node.nodeType === 1 ? node : node.parentElement).closest('.rich-editor');
+    if (editor) editor._savedRange = selection.getRangeAt(0).cloneRange();
+  }
+
+  function restoreEditorSelection(editor) {
+    editor.focus();
+    if (!editor._savedRange) {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      editor._savedRange = range.cloneRange();
+      return;
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(editor._savedRange);
+  }
+
+  function editorForToolbar(control) {
+    return $('#' + control.closest('.editor-toolbar').dataset.toolbarFor);
+  }
+
+  function handleEditorToolbarClick(event) {
+    const control = event.target.closest('button');
+    if (!control) return;
+    const editor = editorForToolbar(control);
+    if (control.hasAttribute('data-image-fit')) return fitSelectedLogo(editor);
+    if (control.dataset.imageWidth) return resizeSelectedImage(editor, control.dataset.imageWidth);
+    if (control.hasAttribute('data-image-custom')) {
+      const width = Number(prompt('Enter image width in pixels. Example: 180', '300'));
+      if (!Number.isFinite(width) || width < 40 || width > 1200) return width ? toast('Use a width between 40 and 1200 pixels.', true) : undefined;
+      return resizeSelectedImage(editor, Math.round(width) + 'px');
+    }
+    restoreEditorSelection(editor);
+    if (control.dataset.command) document.execCommand(control.dataset.command, false, null);
+    if (control.hasAttribute('data-add-link')) {
+      const url = prompt('Paste the full website link, beginning with https://');
+      if (url && /^https?:\/\//i.test(url)) document.execCommand('createLink', false, url);
+      else if (url) toast('The link must begin with https:// or http://.', true);
+    }
+    if (control.hasAttribute('data-insert-table')) {
+      const rows = Math.min(12, Math.max(1, Number(prompt('How many rows?', '3')) || 3));
+      const columns = Math.min(8, Math.max(1, Number(prompt('How many columns?', '5')) || 5));
+      const cells = Array.from({ length: rows }, (_, row) => `<tr>${Array.from({ length: columns }, () => `<${row === 0 ? 'th' : 'td'} style="border:1px solid #d1d1cd;padding:8px">${row === 0 ? 'Heading' : 'Text'}</${row === 0 ? 'th' : 'td'}>`).join('')}</tr>`).join('');
+      insertHtmlAtEditor(editor, `<table style="border-collapse:collapse;width:100%;margin:12px 0"><tbody>${cells}</tbody></table><p><br></p>`);
+    }
+  }
+
+  function applyEditorFont(event) {
+    const editor = editorForToolbar(event.target);
+    restoreEditorSelection(editor);
+    document.execCommand('fontName', false, event.target.value);
+    event.target.value = event.target.options[0].value;
+  }
+
+  function insertEditorPlaceholder(event) {
+    const value = event.target.value;
+    if (!value) return;
+    const editor = editorForToolbar(event.target);
+    restoreEditorSelection(editor);
+    insertHtmlAtEditor(editor, escapeHtml(value));
+    event.target.value = '';
+  }
+
+  function insertHtmlAtEditor(editor, html) {
+    restoreEditorSelection(editor);
+    document.execCommand('insertHTML', false, html);
+    rememberEditorSelection();
+  }
+
+  function setEditorHtml(editor, html) {
+    editor.innerHTML = html || '';
+    editor._savedRange = null;
+    hydrateEditorImages(editor);
+  }
+
+  async function hydrateEditorImages(editor) {
+    const images = Array.from(editor.querySelectorAll('img')).filter(image => image.dataset.cid || /^cid:/i.test(image.getAttribute('src') || ''));
+    await Promise.all(images.map(async image => {
+      const assetId = image.dataset.cid || String(image.getAttribute('src')).replace(/^cid:/i, '');
+      image.dataset.cid = assetId;
+      image.dataset.assetId = assetId;
+      try { image.src = await server('getEmailAssetPreview', assetId, actorPayload()); }
+      catch (error) { image.alt = `Missing image: ${assetId}`; }
+    }));
+  }
+
+  function editorHtml(editor) {
+    const copy = editor.cloneNode(true);
+    copy.removeAttribute('contenteditable');
+    copy.querySelectorAll('.email-image-selected').forEach(image => image.classList.remove('email-image-selected'));
+    copy.querySelectorAll('img[data-cid]').forEach(image => image.setAttribute('src', 'cid:' + image.dataset.cid));
+    return copy.innerHTML;
+  }
+
+  function selectEditorImage(image) {
+    const editor = image.closest('.rich-editor');
+    if (!editor) return;
+    editor.querySelectorAll('.email-image-selected').forEach(item => item.classList.remove('email-image-selected'));
+    image.classList.add('email-image-selected');
+  }
+
+  function resizeSelectedImage(editor, width) {
+    const image = editor.querySelector('.email-image-selected');
+    if (!image) return toast('Click an image in the email first, then choose its size.', true);
+    image.style.width = width;
+    image.style.maxWidth = '100%';
+    image.style.height = 'auto';
+    toast('Image size updated to ' + width + '.');
+  }
+
+  function fitSelectedLogo(editor) {
+    const image = editor.querySelector('.email-image-selected');
+    if (!image) return toast('Click an image in the email first, then choose Fit logo.', true);
+    image.style.width = 'auto';
+    image.style.maxWidth = '100%';
+    image.style.height = 'auto';
+    image.style.maxHeight = editor.id === 'signature-editor' ? '140px' : '260px';
+    image.style.objectFit = 'contain';
+    toast('Logo fitted without stretching or cropping.');
+  }
+
+  function syncEditorToInput(editor, input) {
+    input.value = editorHtml(editor);
+  }
+
+  function defaultSignatureHtml() {
+    return `<p><strong>{{MemberName}}</strong><br>{{MemberTitle}}<br>{{MemberPhone}}<br>{{MemberEmail}}</p>`;
+  }
+
+  function sampleMerge(text) {
+    const profile = { CompanyName: 'Sample Company', LegalName: 'Sample Company Sdn. Bhd.', ContactName: 'Marketing Team', CampaignName: state.bootstrap.campaign.name, MemberName: state.actor.memberName, MemberTitle: 'Sponsorship Committee', MemberPhone: '+60 12-345 6789', MemberEmail: 'marketing@example.com', MemberSignature: defaultSignatureHtml() };
+    return Object.entries(profile).reduce((result, [key, value]) => result.replace(new RegExp(`{{\\s*${key}\\s*}}`, 'g'), value), String(text || ''));
+  }
+
+  async function openCompanyDetails(approachId, button) {
+    setBusy(button, true, 'Opening');
+    try {
+      const data = await server('getCompanyEditData', approachId, actorPayload());
+      const form = $('#details-form');
+      form.reset();
+      form.elements.approachId.value = approachId;
+      form.elements.legalName.value = data.company.LegalName || '';
+      form.elements.website.value = data.company.Website || '';
+      form.elements.industry.value = data.company.Industry || '';
+      const aliases = data.aliases.map(item => item.Alias).filter(Boolean);
+      const contacts = data.contacts.map(item => [item.ContactName, item.Email, item.Phone].filter(Boolean).join(' | ')).filter(Boolean);
+      $('#existing-details').innerHTML = `<strong>${escapeHtml(data.company.DisplayName)}</strong><div class="record-meta">Aliases: ${escapeHtml(aliases.join(', ') || 'None added')}</div><div class="record-meta">Contacts: ${escapeHtml(contacts.join('; ') || 'None added')}</div>`;
+      $('#details-modal').classList.remove('hidden');
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function saveCompanyDetails(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    const payload = formObject(form);
+    setBusy(submitter, true, 'Saving');
+    try {
+      await server('addCompanyDetails', payload, actorPayload());
+      closeModal('details-modal');
+      toast('Company details saved and checked for contact clashes.');
+      state.activeView === 'overview' ? loadDashboard() : loadPipeline();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  function openManualActivity(approachId) {
+    const form = $('#activity-form');
+    form.reset();
+    form.elements.approachId.value = approachId;
+    const local = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    form.elements.occurredAt.value = local;
+    $('#activity-modal').classList.remove('hidden');
+  }
+
+  async function saveManualActivity(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    const payload = formObject(form);
+    setBusy(submitter, true, 'Saving');
+    try {
+      await server('recordManualInteraction', payload, actorPayload());
+      closeModal('activity-modal');
+      toast('Activity added to the company history.');
+      state.activeView === 'follow-ups' ? loadFollowUps() : state.activeView === 'overview' ? loadDashboard() : loadPipeline();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  async function loadAdmin() {
+    $('#duplicate-list').innerHTML = loadingRows(3);
+    try {
+      const data = await server('getAdminData', actorPayload());
+      $('#duplicate-list').innerHTML = data.duplicateReviews.length ? data.duplicateReviews.map(row => `<article class="record-row"><div class="record-main"><strong>${escapeHtml(row.SubmittedCompanyName)}</strong><span>Possible match: ${escapeHtml(row.CandidateName)} (${escapeHtml(row.MatchScore)}%)</span></div><div class="record-meta">Existing owner: ${escapeHtml(row.ExistingOwner || 'None')}<br>${escapeHtml(row.MatchReasons)}</div><div><span class="status warning">Review</span></div><div class="record-actions"><button class="button secondary compact" data-resolve-duplicate="${escapeHtml(row.ReviewId)}" data-decision="Use existing company">Same company</button><button class="button primary compact" data-resolve-duplicate="${escapeHtml(row.ReviewId)}" data-decision="Separate company">Separate</button></div></article>`).join('') : emptyState('No duplicate reviews', 'Potential conflicts will appear here.');
+      $('#member-list').innerHTML = data.members.map(member => `<article class="record-row"><div class="record-main"><strong>${escapeHtml(member.memberName)}</strong><span>${escapeHtml(member.role)}${member.notificationEmail ? ` | Alerts: ${escapeHtml(member.notificationEmail)}` : ''}</span></div><div class="record-actions"><span class="status ${member.notifyOnReplies ? 'accent' : ''}">${member.notifyOnReplies ? 'Reply alerts on' : 'Alerts off'}</span></div></article>`).join('');
+    } catch (error) { toast(error.message, true); }
+  }
+
+  async function approve(approachId, button) {
+    setBusy(button, true, 'Approving');
+    try { await server('approveApproach', approachId, actorPayload()); toast('Approach approved. The member can send it directly.'); loadAdmin(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function resolveDuplicate(reviewId, decision, button) {
+    setBusy(button, true, 'Saving');
+    try { await server('resolveDuplicateReview', reviewId, decision, actorPayload()); toast(`Duplicate review resolved: ${decision}.`); loadAdmin(); }
+    catch (error) { toast(error.message, true); }
+    finally { setBusy(button, false); }
+  }
+
+  async function addMember(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitter = event.submitter;
+    const values = formObject(form);
+    setBusy(submitter, true, 'Adding');
+    try {
+      const member = await server('addMember', values, actorPayload());
+      const index = state.bootstrap.members.findIndex(item => item.memberId === member.MemberId);
+      const summary = { memberId: member.MemberId, memberName: member.MemberName, role: member.Role };
+      if (index >= 0) state.bootstrap.members[index] = summary; else state.bootstrap.members.push(summary);
+      populateIdentity();
+      form.reset();
+      toast(member.WasUpdated ? 'Existing committee member updated.' : 'Committee member added.');
+      loadAdmin();
+    } catch (error) { toast(error.message, true); }
+    finally { setBusy(submitter, false); }
+  }
+
+  async function changeStage(approachId, stage, select) {
+    select.disabled = true;
+    try { await server('updatePipelineStage', approachId, stage, actorPayload()); toast(`Stage updated to ${stage}.`); }
+    catch (error) { toast(error.message, true); loadPipeline(); }
+    finally { select.disabled = false; }
+  }
+
+  function handleDynamicClick(event) {
+    const editorImage = event.target.closest('.rich-editor img');
+    if (editorImage) return selectEditorImage(editorImage);
+    const template = event.target.closest('[data-template-select]');
+    if (template) return selectTemplate(template.dataset.templateSelect);
+    const asset = event.target.closest('[data-insert-asset]');
+    if (asset) return insertAsset(asset.dataset.insertAsset, asset);
+    const brandLogo = event.target.closest('[data-set-brand-logo]');
+    if (brandLogo) return setBrandLogo(brandLogo.dataset.setBrandLogo, brandLogo);
+    const claim = event.target.closest('[data-claim-company]');
+    if (claim) return claimCompany(claim.dataset.claimCompany, claim);
+    const approval = event.target.closest('[data-submit-approval]');
+    if (approval) return requestApproval(approval.dataset.submitApproval, approval);
+    const compose = event.target.closest('[data-compose]');
+    if (compose) return openComposer(compose.dataset.compose, compose);
+    const details = event.target.closest('[data-details]');
+    if (details) return openCompanyDetails(details.dataset.details, details);
+    const activity = event.target.closest('[data-activity]');
+    if (activity) return openManualActivity(activity.dataset.activity);
+    const approveButton = event.target.closest('[data-approve]');
+    if (approveButton) return approve(approveButton.dataset.approve, approveButton);
+    const duplicate = event.target.closest('[data-resolve-duplicate]');
+    if (duplicate) return resolveDuplicate(duplicate.dataset.resolveDuplicate, duplicate.dataset.decision, duplicate);
+    const handled = event.target.closest('[data-reply-handled]');
+    if (handled) return handleReply(handled.dataset.replyHandled, handled);
+    const systemHandled = event.target.closest('[data-system-handled]');
+    if (systemHandled) return handleSystemResponse(systemHandled.dataset.systemHandled, systemHandled);
+    const viewMember = event.target.closest('[data-view-member]');
+    if (viewMember) {
+      $('#pipeline-owner').value = viewMember.dataset.viewMember;
+      navigate('pipeline');
+      return;
+    }
+    const cancel = event.target.closest('[data-cancel-queue]');
+    if (cancel) return cancelQueue(cancel.dataset.cancelQueue, cancel);
+  }
+
+  function handleDynamicChange(event) {
+    if (event.target.matches('[data-stage-change]')) changeStage(event.target.dataset.stageChange, event.target.value, event.target);
+    if (event.target.matches('[data-select-all]')) $$('[data-bulk-select]:not(:disabled)').forEach(box => { box.checked = event.target.checked; });
+  }
+
+  function approvalBadge(status) {
+    const cls = status === 'Approved' ? 'success' : status === 'Pending' ? 'warning' : status === 'Returned' ? 'danger' : '';
+    return `<span class="status ${cls}">${escapeHtml(status || 'Not Submitted')}</span>`;
+  }
+
+  function stageClass(stage) {
+    if (stage === 'Confirmed') return 'success';
+    if (stage === 'Rejected' || stage === 'Closed') return 'danger';
+    if (stage === 'Replied' || stage === 'Negotiating') return 'accent';
+    if (stage === 'Ready for Review') return 'warning';
+    return '';
+  }
+
+  function updateQuota(value) {
+    const remaining = value && typeof value === 'object' ? value.remaining : value;
+    $('#quota-chip').textContent = `Estimated send capacity: ${remaining}`;
+  }
+
+  function loadingRows(count) {
+    return Array.from({ length: count }, () => '<div class="record-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>').join('');
+  }
+
+  function emptyState(title, body) {
+    return `<div class="empty-state"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(body)}</p></div>`;
+  }
+
+  function formatDate(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  }
+
+  function closeModal(id) {
+    $('#' + id).classList.add('hidden');
+  }
+
+  function setBusy(button, busy, label) {
+    if (!button) return;
+    if (busy) {
+      button._originalBusyHtml = button.innerHTML;
+      button.textContent = label || 'Working';
+      button.disabled = true;
+    } else {
+      if (button._originalBusyHtml !== undefined) button.innerHTML = button._originalBusyHtml;
+      delete button._originalBusyHtml;
+      button.disabled = false;
+    }
+  }
+
+  function toast(message, error = false) {
+    const element = document.createElement('div');
+    element.className = 'toast' + (error ? ' error' : '');
+    element.textContent = message;
+    $('#toast-region').appendChild(element);
+    setTimeout(() => element.remove(), 4500);
+  }
+
+  init();
+})();

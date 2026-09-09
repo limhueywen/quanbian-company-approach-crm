@@ -1,0 +1,8 @@
+# Local Apps Script deployment identity. Do not publish your Script ID.
+.clasp.json
+
+# Local dependencies, logs and operating-system files.
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
